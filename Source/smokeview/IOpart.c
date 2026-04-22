@@ -958,11 +958,19 @@ void CreatePartBoundFile(partdata *parti){
   FILE *stream_out_local=NULL;
 
   if(parti->reg_file == NULL)return;
-  stream = fopen_b(parti->reg_file, NULL, 0, "rb");
+  // Use the memory-backed stream mode: fread_mv only supports the
+  // zero-copy buffer path (stdio_m.c::fread_mv returns 0 when
+  // stream_m->stream != NULL), so opening via fopen_b(..., NULL, 0, "rb")
+  // — which takes the file-backed branch in fopen_b — makes the
+  // FORTREAD_mv call below bail out after the first frame and leaves
+  // the .bnd bounds cache (and therefore parti->ntimes) at 1.
+  // fopen_m("rbm") slurps the PRT5 into a buffer up front so
+  // fread_mv's memory branch applies throughout the scan.
+  stream = fopen_m(parti->reg_file, "rbm");
   if(stream==NULL)return;
   if(parti->bound_file!=NULL)stream_out_local = FOPEN_2DIR(parti->bound_file, "w");
   if(stream_out_local==NULL){
-    fclose_b(stream);
+    fclose_m(stream);
     return;
   }
 
@@ -1040,7 +1048,7 @@ void CreatePartBoundFile(partdata *parti){
     CheckMemory;
   }
 wrapup:
-  fclose_b(stream);
+  fclose_m(stream);
   fclose(stream_out_local);
   CheckMemory;
   FREEMEMORY(numtypes_local);
