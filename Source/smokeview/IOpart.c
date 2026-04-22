@@ -1984,6 +1984,15 @@ void FinalizePartLoad(partdata *parti){
   }
   visParticles = 1;
   sorting_tags = 1;
+  // Join any prior SortAllPartTags thread before re-initialising the
+  // slot. FinalizePartLoad is called twice on the interactive load
+  // path — once inside ReadPart when parti->finalize==1, and once
+  // from LoadAllPartFilesMT's cleanup loop (menus.c:3983). The first
+  // call's ThreadRun launches the sort asynchronously; the join at
+  // L1990 below only fires for runscript/streak5show, so in the
+  // plain GUI load case the slot is still non-NULL on re-entry and
+  // the ThreadInit precondition `assert(*thiptr == NULL)` aborts.
+  ThreadJoin(&sorttags_threads);
   ThreadInit(&sorttags_threads, n_sorttags_threads, use_sorttags_threads, serial_override, SortAllPartTags);
   ThreadRun(sorttags_threads);
   if(runscript != 0 || streak5show == 1){
