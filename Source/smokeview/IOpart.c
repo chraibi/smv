@@ -381,19 +381,26 @@ void DrawPart(const partdata *parti, int mode){
                 }
                 prop = datacopy->partclassbase->prop;
                 CopyDepVals(partclassi, datacopy, colorptr, prop, j);
-                // Per-particle AZIMUTH rotation.
-                // readsmvfile.c (L6310) records col_azimuth when a
-                // CLASS_OF_PARTICLES quantity has shortlabel "AZIMUTH";
-                // CopyDepVals() above unmaps the byte-discretised irvals
-                // back to float degrees into partclassi->fvars_dep[col_azimuth].
-                // We apply that as an extra rotatez on top of the class-level
-                // azimuth so particles face their walking direction (replaces
-                // the body-angle rotation the old FDS+Evac CLASS_OF_HUMANS
-                // reader used to apply from AP(:,1) in evac.f90:DUMP_EVAC).
+                // Per-particle AZIMUTH rotation. readsmvfile.c records
+                // col_azimuth when a CLASS_OF_PARTICLES quantity has
+                // shortlabel "AZIMUTH"; we read that column's float value
+                // for this particle straight from rvals (loaded by
+                // GetPartData) and rotatez by it. Revives the per-particle
+                // body-angle rotation the old FDS+Evac CLASS_OF_HUMANS
+                // reader applied from AP(:,1) in evac.f90:DUMP_EVAC.
+                //
+                // rvals is used (not fvars_dep[col_azimuth]) because
+                // fvars_dep is populated by CopyDepVals() through the
+                // byte-discretised irvals and partpropdata valmin/valmax,
+                // and valmin/valmax are only wired up from the case .ini
+                // or GUI — they stay at the (1.0, 0.0) sentinel for a
+                // freshly-loaded PRT5 without prior .ini bounds, which
+                // collapses every unmapped value to 0°.
                 {
                   int col_az = datacopy->partclassbase->col_azimuth;
-                  if(col_az >= 0){
-                    glRotatef(partclassi->fvars_dep[col_az], 0.0, 0.0, 1.0);
+                  if(col_az >= 0 && datacopy->rvals != NULL){
+                    float *az_vals = datacopy->rvals + col_az * datacopy->npoints_file;
+                    glRotatef(az_vals[j], 0.0, 0.0, 1.0);
                   }
                 }
                 glScalef(SCALE2SMV(1.0), SCALE2SMV(1.0), SCALE2SMV(1.0));
