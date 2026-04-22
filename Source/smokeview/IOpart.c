@@ -381,6 +381,21 @@ void DrawPart(const partdata *parti, int mode){
                 }
                 prop = datacopy->partclassbase->prop;
                 CopyDepVals(partclassi, datacopy, colorptr, prop, j);
+                // Per-particle AZIMUTH rotation.
+                // readsmvfile.c (L6310) records col_azimuth when a
+                // CLASS_OF_PARTICLES quantity has shortlabel "AZIMUTH";
+                // CopyDepVals() above unmaps the byte-discretised irvals
+                // back to float degrees into partclassi->fvars_dep[col_azimuth].
+                // We apply that as an extra rotatez on top of the class-level
+                // azimuth so particles face their walking direction (replaces
+                // the body-angle rotation the old FDS+Evac CLASS_OF_HUMANS
+                // reader used to apply from AP(:,1) in evac.f90:DUMP_EVAC).
+                {
+                  int col_az = datacopy->partclassbase->col_azimuth;
+                  if(col_az >= 0){
+                    glRotatef(partclassi->fvars_dep[col_az], 0.0, 0.0, 1.0);
+                  }
+                }
                 glScalef(SCALE2SMV(1.0), SCALE2SMV(1.0), SCALE2SMV(1.0));
 
                 partfacedir[0] = global_scase.xbar0 + SCALE2SMV(fds_eyepos[0]) - xpos[j];
