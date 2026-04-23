@@ -117,6 +117,13 @@ void ThreadJoin(threaderdata **thiptr){
     for(int i = 0; i < thi->n_threads; i++){
       pthread_join(thi->thread_ids[i], NULL);
     }
+    // Release the per-thread resources ThreadInit allocated under
+    // the matching `use_threads == 1` branch. Without this the
+    // thread_ids array and the pthread mutex state leak once per
+    // init/join cycle — invisible on a single-load binary but adds
+    // up under repeated particle reloads.
+    pthread_mutex_destroy(&thi->mutex);
+    FREEMEMORY(thi->thread_ids);
   }
   ThreadRemove(thi);
   FREEMEMORY(thi);
