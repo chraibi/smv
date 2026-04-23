@@ -381,6 +381,28 @@ void DrawPart(const partdata *parti, int mode){
                 }
                 prop = datacopy->partclassbase->prop;
                 CopyDepVals(partclassi, datacopy, colorptr, prop, j);
+                // Per-particle AZIMUTH rotation. readsmvfile.c records
+                // col_azimuth when a CLASS_OF_PARTICLES quantity has
+                // shortlabel "AZIMUTH"; we read that column's float value
+                // for this particle straight from rvals (loaded by
+                // GetPartData) and rotatez by it. Revives the per-particle
+                // body-angle rotation the old FDS+Evac CLASS_OF_HUMANS
+                // reader applied from AP(:,1) in evac.f90:DUMP_EVAC.
+                //
+                // rvals is used (not fvars_dep[col_azimuth]) because
+                // fvars_dep is populated by CopyDepVals() through the
+                // byte-discretised irvals and partpropdata valmin/valmax,
+                // and valmin/valmax are only wired up from the case .ini
+                // or GUI — they stay at the (1.0, 0.0) sentinel for a
+                // freshly-loaded PRT5 without prior .ini bounds, which
+                // collapses every unmapped value to 0°.
+                {
+                  int col_az = datacopy->partclassbase->col_azimuth;
+                  if(col_az >= 0 && datacopy->rvals != NULL){
+                    float *az_vals = datacopy->rvals + col_az * datacopy->npoints_file;
+                    glRotatef(az_vals[j], 0.0, 0.0, 1.0);
+                  }
+                }
                 glScalef(SCALE2SMV(1.0), SCALE2SMV(1.0), SCALE2SMV(1.0));
 
                 partfacedir[0] = global_scase.xbar0 + SCALE2SMV(fds_eyepos[0]) - xpos[j];
@@ -958,11 +980,19 @@ void CreatePartBoundFile(partdata *parti){
   FILE *stream_out_local=NULL;
 
   if(parti->reg_file == NULL)return;
-  stream = fopen_b(parti->reg_file, NULL, 0, "rb");
+  // Use the memory-backed stream mode: fread_mv only supports the
+  // zero-copy buffer path (stdio_m.c::fread_mv returns 0 when
+  // stream_m->stream != NULL), so opening via fopen_b(..., NULL, 0, "rb")
+  // — which takes the file-backed branch in fopen_b — makes the
+  // FORTREAD_mv call below bail out after the first frame and leaves
+  // the .bnd bounds cache (and therefore parti->ntimes) at 1.
+  // fopen_m("rbm") slurps the PRT5 into a buffer up front so
+  // fread_mv's memory branch applies throughout the scan.
+  stream = fopen_m(parti->reg_file, "rbm");
   if(stream==NULL)return;
   if(parti->bound_file!=NULL)stream_out_local = FOPEN_2DIR(parti->bound_file, "w");
   if(stream_out_local==NULL){
-    fclose_b(stream);
+    fclose_m(stream);
     return;
   }
 
@@ -1040,7 +1070,7 @@ void CreatePartBoundFile(partdata *parti){
     CheckMemory;
   }
 wrapup:
-  fclose_b(stream);
+  fclose_m(stream);
   fclose(stream_out_local);
   CheckMemory;
   FREEMEMORY(numtypes_local);
@@ -1954,6 +1984,15 @@ void FinalizePartLoad(partdata *parti){
   }
   visParticles = 1;
   sorting_tags = 1;
+  // Join any prior SortAllPartTags thread before re-initialising the
+  // slot. FinalizePartLoad is called twice on the interactive load
+  // path — once inside ReadPart when parti->finalize==1, and once
+  // from LoadAllPartFilesMT's cleanup loop (menus.c:3983). The first
+  // call's ThreadRun launches the sort asynchronously; the join at
+  // L1990 below only fires for runscript/streak5show, so in the
+  // plain GUI load case the slot is still non-NULL on re-entry and
+  // the ThreadInit precondition `assert(*thiptr == NULL)` aborts.
+  ThreadJoin(&sorttags_threads);
   ThreadInit(&sorttags_threads, n_sorttags_threads, use_sorttags_threads, serial_override, SortAllPartTags);
   ThreadRun(sorttags_threads);
   if(runscript != 0 || streak5show == 1){

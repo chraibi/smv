@@ -120,7 +120,13 @@ void ThreadJoin(threaderdata **thiptr){
   }
   ThreadRemove(thi);
   FREEMEMORY(thi);
-  *thiptr = thi;
+  // Clear the caller's slot so the next ThreadInit on the same
+  // thiptr passes its `assert(*thiptr == NULL)` precondition
+  // (L70 above). Previously assigned `thi`, a pointer that had just
+  // been FREEMEMORY'd on the preceding line — left a dangling
+  // non-NULL value that aborted Smokeview on the second init of any
+  // threaded slot (e.g. interactive LoadParticleMenu re-entry).
+  *thiptr = NULL;
 #endif
 }
 
