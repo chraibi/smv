@@ -978,21 +978,20 @@ void CreatePartBoundFile(partdata *parti){
   float time_local;
   int nparts_local, *numtypes_local = NULL, numtypes_temp_local[2];
   FILE *stream_out_local=NULL;
+  float *rvals_buffer = NULL;
+  size_t rvals_capacity = 0;
 
   if(parti->reg_file == NULL)return;
-  // Use the memory-backed stream mode: fread_mv only supports the
-  // zero-copy buffer path (stdio_m.c::fread_mv returns 0 when
-  // stream_m->stream != NULL), so opening via fopen_b(..., NULL, 0, "rb")
-  // — which takes the file-backed branch in fopen_b — makes the
-  // FORTREAD_mv call below bail out after the first frame and leaves
-  // the .bnd bounds cache (and therefore parti->ntimes) at 1.
-  // fopen_m("rbm") slurps the PRT5 into a buffer up front so
-  // fread_mv's memory branch applies throughout the scan.
-  stream = fopen_m(parti->reg_file, "rbm");
+  // Stream-backed open: do NOT slurp the whole PRT5 into memory.
+  // `fread_mv` (stdio_m.c) returns 0 for file-backed streams, so the
+  // per-frame quantity record below is read via `FORTREAD_m` into a
+  // caller-owned, grown-on-demand buffer (`rvals_buffer`). That keeps
+  // bounds scanning O(largest frame) in memory even for multi-GB PRT5.
+  stream = fopen_b(parti->reg_file, NULL, 0, "rb");
   if(stream==NULL)return;
   if(parti->bound_file!=NULL)stream_out_local = FOPEN_2DIR(parti->bound_file, "w");
   if(stream_out_local==NULL){
-    fclose_m(stream);
+    fclose_b(stream);
     return;
   }
 
@@ -1030,7 +1029,7 @@ void CreatePartBoundFile(partdata *parti){
 
     for(jj = 0; jj<nclasses_local; jj++){
       int skip_local, kk;
-      float *rvals_local;
+      float *rvals_local = NULL;
 
       FORTREAD_m(&nparts_local, 4, 1, stream);
       if(count_read != 1)goto wrapup;
@@ -1044,8 +1043,15 @@ void CreatePartBoundFile(partdata *parti){
       if(returncode != PASS_m)goto wrapup;
       CheckMemory;
       if(numtypes_local[2*jj]>0){
-        FORTREAD_mv((void **)&rvals_local, 4, nparts_local*numtypes_local[2*jj], stream);
-        if(count_read != nparts_local * numtypes_local[2 * jj])goto wrapup;
+        size_t rvals_needed = (size_t)nparts_local * (size_t)numtypes_local[2*jj];
+        if(rvals_needed > rvals_capacity){
+          FREEMEMORY(rvals_buffer);
+          if(NewMemory((void **)&rvals_buffer, rvals_needed*sizeof(float))==0)goto wrapup;
+          rvals_capacity = rvals_needed;
+        }
+        FORTREAD_m(rvals_buffer, 4, (int)rvals_needed, stream);
+        if((size_t)count_read != rvals_needed)goto wrapup;
+        rvals_local = rvals_buffer;
       }
       CheckMemory;
       for(kk = 0; kk<numtypes_local[2*jj]; kk++){
@@ -1070,10 +1076,11 @@ void CreatePartBoundFile(partdata *parti){
     CheckMemory;
   }
 wrapup:
-  fclose_m(stream);
+  fclose_b(stream);
   fclose(stream_out_local);
   CheckMemory;
   FREEMEMORY(numtypes_local);
+  FREEMEMORY(rvals_buffer);
 }
 
 /* ------------------ CreatePartSizeFile ------------------------ */
@@ -1983,7 +1990,6 @@ void FinalizePartLoad(partdata *parti){
     }
   }
   visParticles = 1;
-  sorting_tags = 1;
   // Join any prior SortAllPartTags thread before re-initialising the
   // slot. FinalizePartLoad is called twice on the interactive load
   // path — once inside ReadPart when parti->finalize==1, and once
@@ -1992,7 +1998,13 @@ void FinalizePartLoad(partdata *parti){
   // L1990 below only fires for runscript/streak5show, so in the
   // plain GUI load case the slot is still non-NULL on re-entry and
   // the ThreadInit precondition `assert(*thiptr == NULL)` aborts.
+  //
+  // Set `sorting_tags=1` *after* this join, not before: SortAllPartTags
+  // clears it to 0 just before returning, so joining a still-running
+  // prior sort would land us with `sorting_tags=0` right as the new
+  // sort starts and defeat the tag-access guard.
   ThreadJoin(&sorttags_threads);
+  sorting_tags = 1;
   ThreadInit(&sorttags_threads, n_sorttags_threads, use_sorttags_threads, serial_override, SortAllPartTags);
   ThreadRun(sorttags_threads);
   if(runscript != 0 || streak5show == 1){
